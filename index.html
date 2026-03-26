@@ -30,6 +30,7 @@
     font-size: 0.84rem; z-index: 9999; transition: transform 0.3s; pointer-events: none;
   }
   #toast.show { transform: translateX(-50%) translateY(0); }
+  #toast.error { background: #b91c1c; }
 
   /* ── LOADING ── */
   #loadingOverlay {
@@ -57,6 +58,7 @@
     font-size: 0.72rem; padding: 4px 10px; border-radius: 20px;
     background: rgba(74,124,89,0.25); color: #7ecfa0; font-weight: 500;
   }
+  .sync-badge.error { background: rgba(185,28,28,0.25); color: #fca5a5; }
   .btn {
     padding: 8px 18px; border: none; border-radius: 6px;
     font-family: 'DM Sans', sans-serif; font-size: 0.85rem; font-weight: 500;
@@ -197,13 +199,14 @@
   .field-textarea { resize: vertical; min-height: 80px; }
   .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
   .qty-input { width: 60px; padding: 5px 8px; border: 1px solid var(--border); border-radius: 5px; font-size: 0.82rem; text-align: center; font-family: 'DM Sans', sans-serif; }
-  .modal-footer { padding: 18px 28px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 10px; }
+  .modal-footer { padding: 18px 28px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 10px; align-items: center; }
   .btn-danger { background: #fee2e2; color: #b91c1c; }
   .btn-danger:hover { background: #fecaca; }
   .btn-save { background: var(--accent); color: white; }
   .btn-save:hover { background: #b0432b; }
   .btn-secondary { background: #f0ece6; color: var(--ink); }
   .btn-secondary:hover { background: #e8e2d8; }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none !important; }
 
   /* ── EVENT PANEL ── */
   .event-panel { background: white; border-radius: 12px; border: 1px solid var(--border); overflow: hidden; margin-bottom: 24px; }
@@ -240,6 +243,7 @@
   .error-card .emoji { font-size: 3rem; margin-bottom: 16px; }
   .error-card h2 { font-family: 'DM Serif Display', serif; font-size: 1.4rem; margin-bottom: 10px; }
   .error-card p { font-size: 0.85rem; color: var(--ink-soft); line-height: 1.6; }
+  .error-detail { font-size: 0.75rem; background: #fef2f2; border: 1px solid #fecaca; border-radius: 6px; padding: 10px 14px; margin-top: 14px; color: #b91c1c; text-align: left; word-break: break-all; }
 </style>
 </head>
 <body>
@@ -256,6 +260,7 @@
     <div class="emoji">⚠️</div>
     <h2>Connection Failed</h2>
     <p id="errorMsg">Could not connect to the database. Please check your Supabase configuration.</p>
+    <div id="errorDetail" class="error-detail" style="display:none"></div>
   </div>
 </div>
 
@@ -264,7 +269,7 @@
   <header>
     <div class="logo">Asset<span>Tracker</span></div>
     <div class="header-actions">
-      <span class="sync-badge">🟢 Live Sync</span>
+      <span class="sync-badge" id="syncBadge">🟢 Live Sync</span>
       <button class="btn btn-ghost btn-sm" onclick="openEventModal()">📅 New Event</button>
       <button class="btn btn-primary btn-sm" onclick="openAddAsset()">+ Add Asset</button>
     </div>
@@ -355,7 +360,7 @@
     <div class="modal-footer">
       <button class="btn btn-danger btn-sm" id="btnDelete" style="display:none;margin-right:auto" onclick="deleteAsset()">Delete</button>
       <button class="btn btn-secondary" onclick="closeModal('assetModal')">Cancel</button>
-      <button class="btn btn-save" onclick="saveAsset()">Save Asset</button>
+      <button class="btn btn-save" id="btnSaveAsset" onclick="saveAsset()">Save Asset</button>
     </div>
   </div>
 </div>
@@ -404,7 +409,7 @@
     <div class="modal-footer">
       <button class="btn btn-danger btn-sm" id="btnDeleteEvent" style="display:none;margin-right:auto" onclick="deleteEvent()">Delete</button>
       <button class="btn btn-secondary" onclick="closeModal('eventModal')">Cancel</button>
-      <button class="btn btn-save" onclick="saveEvent()">Save Event</button>
+      <button class="btn btn-save" id="btnSaveEvent" onclick="saveEvent()">Save Event</button>
     </div>
   </div>
 </div>
@@ -412,7 +417,7 @@
 <div id="toast"></div>
 
 <script>
-// ── HARDCODED SUPABASE CONFIG ──
+// ── SUPABASE CONFIG ──
 const SB_URL = 'https://vcnnnymklarneksgvjxt.supabase.co';
 const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZjbm5ueW1rbGFybmVrc2d2anh0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMzNjQ0OTcsImV4cCI6MjA4ODk0MDQ5N30.pQpu7UJR7m-1RO2wf7Ybpohdm8CVYiXquNMmdnTF96k';
 
@@ -430,60 +435,108 @@ let editingAssetId = null, editingEventId = null, currentImageData = '';
 async function init() {
   try {
     sb = window.supabase.createClient(SB_URL, SB_KEY);
-    const { error } = await sb.from('assets').select('id').limit(1);
-    if (error) throw error;
+
+    // Test connection with a real read
+    const { data: testData, error: testError } = await sb.from('assets').select('id').limit(1);
+    if (testError) throw testError;
+
     await loadData();
+
     document.getElementById('loadingOverlay').style.display = 'none';
     document.getElementById('mainApp').style.display = 'block';
     render();
     setupRealtime();
   } catch(e) {
     document.getElementById('loadingOverlay').style.display = 'none';
-    document.getElementById('errorScreen').style.display = 'flex';
-    document.getElementById('errorMsg').textContent = 'Could not connect: ' + (e.message || 'Check Supabase config and ensure SQL setup has been run.');
+    const es = document.getElementById('errorScreen');
+    es.style.display = 'flex';
+    document.getElementById('errorMsg').textContent = 'Could not connect to the database. Check Supabase config and ensure the SQL setup has been run.';
+    const detail = document.getElementById('errorDetail');
+    detail.style.display = 'block';
+    detail.textContent = e.message || JSON.stringify(e);
   }
 }
 
-// ── DATA ──
+// ── DATA LOADING ──
+// Each row in Supabase is: { id: string, data: jsonb }
+// The full asset/event object is stored inside the `data` column.
 async function loadData() {
   const [aRes, eRes] = await Promise.all([
-    sb.from('assets').select('*'),
-    sb.from('events').select('*')
+    sb.from('assets').select('id, data'),
+    sb.from('events').select('id, data')
   ]);
-  assets = (aRes.data || []).map(r => r.data);
-  events = (eRes.data || []).map(r => r.data);
+
+  if (aRes.error) throw new Error('Failed to load assets: ' + aRes.error.message);
+  if (eRes.error) throw new Error('Failed to load events: ' + eRes.error.message);
+
+  // Extract the `data` jsonb column — this is the full asset/event object
+  assets = (aRes.data || []).map(row => row.data).filter(Boolean);
+  events = (eRes.data || []).map(row => row.data).filter(Boolean);
 }
 
+// ── REALTIME ──
 function setupRealtime() {
-  sb.channel('asset-changes')
+  sb.channel('tracker-changes')
     .on('postgres_changes', { event: '*', schema: 'public', table: 'assets' }, async () => {
-      const { data } = await sb.from('assets').select('*');
-      assets = (data || []).map(r => r.data);
-      render();
-      showToast('Assets updated by a team member');
+      const { data, error } = await sb.from('assets').select('id, data');
+      if (!error) {
+        assets = (data || []).map(row => row.data).filter(Boolean);
+        render();
+      }
     })
     .on('postgres_changes', { event: '*', schema: 'public', table: 'events' }, async () => {
-      const { data } = await sb.from('events').select('*');
-      events = (data || []).map(r => r.data);
-      render();
-      showToast('Events updated by a team member');
+      const { data, error } = await sb.from('events').select('id, data');
+      if (!error) {
+        events = (data || []).map(row => row.data).filter(Boolean);
+        render();
+      }
     })
-    .subscribe();
+    .subscribe((status) => {
+      const badge = document.getElementById('syncBadge');
+      if (status === 'SUBSCRIBED') {
+        badge.textContent = '🟢 Live Sync';
+        badge.className = 'sync-badge';
+      } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
+        badge.textContent = '🔴 Disconnected';
+        badge.className = 'sync-badge error';
+      }
+    });
 }
 
-async function upsertAsset(data) { await sb.from('assets').upsert({ id: data.id, data }); }
-async function removeAsset(id) { await sb.from('assets').delete().eq('id', id); }
-async function upsertEvent(data) { await sb.from('events').upsert({ id: data.id, data }); }
-async function removeEvent(id) { await sb.from('events').delete().eq('id', id); }
+// ── SAVE / DELETE HELPERS ──
+// Saves the full asset object into the `data` jsonb column, keyed by `id`
+async function upsertAsset(assetData) {
+  const { error } = await sb
+    .from('assets')
+    .upsert({ id: assetData.id, data: assetData }, { onConflict: 'id' });
+  if (error) throw new Error('Save failed: ' + error.message);
+}
+
+async function removeAsset(id) {
+  const { error } = await sb.from('assets').delete().eq('id', id);
+  if (error) throw new Error('Delete failed: ' + error.message);
+}
+
+async function upsertEvent(eventData) {
+  const { error } = await sb
+    .from('events')
+    .upsert({ id: eventData.id, data: eventData }, { onConflict: 'id' });
+  if (error) throw new Error('Save failed: ' + error.message);
+}
+
+async function removeEvent(id) {
+  const { error } = await sb.from('events').delete().eq('id', id);
+  if (error) throw new Error('Delete failed: ' + error.message);
+}
 
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2,6); }
 
 // ── TOAST ──
-function showToast(msg) {
+function showToast(msg, isError = false) {
   const t = document.getElementById('toast');
   t.textContent = msg;
-  t.classList.add('show');
-  setTimeout(() => t.classList.remove('show'), 2800);
+  t.className = 'show' + (isError ? ' error' : '');
+  setTimeout(() => { t.className = isError ? 'error' : ''; }, 3200);
 }
 
 // ── VIEWS ──
@@ -512,7 +565,10 @@ function getFiltered() {
     if (filterLocVal && !((a.locations[filterLocVal]||0) > 0)) return false;
     if (searchVal) {
       const q = searchVal.toLowerCase();
-      if (!a.name.toLowerCase().includes(q) && !(a.supplier||'').toLowerCase().includes(q) && !a.type.toLowerCase().includes(q) && !(a.notes||'').toLowerCase().includes(q)) return false;
+      if (!a.name.toLowerCase().includes(q) &&
+          !(a.supplier||'').toLowerCase().includes(q) &&
+          !a.type.toLowerCase().includes(q) &&
+          !(a.notes||'').toLowerCase().includes(q)) return false;
     }
     return true;
   });
@@ -578,7 +634,9 @@ function renderAssets(main) {
 function cardHtml(a) {
   const locPills = LOCS.filter(l => (a.locations?.[l]||0) > 0)
     .map(l => `<span class="pill ${LOC_PILL[l]}">${l}${(a.locations[l]||0)>1?' ×'+a.locations[l]:''}</span>`).join('');
-  const img = a.image ? `<img src="${a.image}" alt="">` : `<div class="no-image"><span>🖼️</span><p>No image</p></div>`;
+  const img = a.image
+    ? `<img src="${a.image}" alt="">`
+    : `<div class="no-image"><span>🖼️</span><p>No image</p></div>`;
   const supplierBadge = a.supplier ? `<div class="card-supplier-badge">${a.supplier.split(' ')[0]}</div>` : '';
   return `<div class="asset-card" onclick="openEditAsset('${a.id}')">
     <div class="card-image">${img}<div class="card-type-badge">${a.type}</div>${supplierBadge}</div>
@@ -614,25 +672,27 @@ function renderEvents(main) {
       </div>
       <button class="btn btn-primary btn-sm" onclick="openEventModal()">+ New Event</button>
     </div>
-    ${events.length === 0 ? `<div class="empty-state"><div class="emoji">📅</div><p>No events yet. Create your first event to start allocating assets.</p></div>` :
-      events.map(ev => {
-        const color = LOC_COLORS[ev.location] || '#888';
-        const allocated = ev.assets || [];
-        const assetNames = allocated.map(id => assets.find(a=>a.id===id)?.name).filter(Boolean);
-        return `<div class="event-panel" onclick="openEditEvent('${ev.id}')" style="cursor:pointer">
-          <div class="event-panel-header" style="background:${color}">
-            <div>
-              <div class="event-panel-title">${ev.name}</div>
-              <div style="font-size:0.78rem;opacity:0.85">${ev.date ? new Date(ev.date).toLocaleDateString('en-AU',{day:'numeric',month:'long',year:'numeric'}) : ''} · ${ev.location}</div>
+    ${events.length === 0
+      ? `<div class="empty-state"><div class="emoji">📅</div><p>No events yet. Create your first event to start allocating assets.</p></div>`
+      : events.map(ev => {
+          const color = LOC_COLORS[ev.location] || '#888';
+          const assetNames = (ev.assets||[]).map(id => assets.find(a=>a.id===id)?.name).filter(Boolean);
+          return `<div class="event-panel" onclick="openEditEvent('${ev.id}')" style="cursor:pointer">
+            <div class="event-panel-header" style="background:${color}">
+              <div>
+                <div class="event-panel-title">${ev.name}</div>
+                <div style="font-size:0.78rem;opacity:0.85">${ev.date ? new Date(ev.date).toLocaleDateString('en-AU',{day:'numeric',month:'long',year:'numeric'}) : ''} · ${ev.location}</div>
+              </div>
+              <div style="font-size:0.82rem;opacity:0.85">${ev.brand}</div>
             </div>
-            <div style="font-size:0.82rem;opacity:0.85">${ev.brand}</div>
-          </div>
-          <div style="padding:16px 20px">
-            ${assetNames.length ? `<div style="font-size:0.82rem;color:var(--ink-soft);margin-bottom:8px">Allocated assets:</div><div class="location-pills">${assetNames.map(n=>`<span class="pill" style="background:#e8e4dc;color:var(--ink)">${n}</span>`).join('')}</div>` : '<div style="font-size:0.82rem;color:#aaa">No assets allocated yet</div>'}
-            ${ev.notes ? `<div class="card-note" style="margin-top:10px">📝 ${ev.notes}</div>` : ''}
-          </div>
-        </div>`;
-      }).join('')
+            <div style="padding:16px 20px">
+              ${assetNames.length
+                ? `<div style="font-size:0.82rem;color:var(--ink-soft);margin-bottom:8px">Allocated assets:</div><div class="location-pills">${assetNames.map(n=>`<span class="pill" style="background:#e8e4dc;color:var(--ink)">${n}</span>`).join('')}</div>`
+                : '<div style="font-size:0.82rem;color:#aaa">No assets allocated yet</div>'}
+              ${ev.notes ? `<div class="card-note" style="margin-top:10px">📝 ${ev.notes}</div>` : ''}
+            </div>
+          </div>`;
+        }).join('')
     }
   `;
 }
@@ -651,11 +711,12 @@ function renderLocations(main) {
             <div style="font-size:0.85rem;opacity:0.8">${locAssets.length} asset types</div>
           </div>
           <div style="padding:12px 16px;display:flex;flex-direction:column;gap:8px">
-            ${locAssets.length === 0 ? '<div style="font-size:0.82rem;color:#aaa;padding:8px 0">No assets at this location</div>' :
-              locAssets.map(a => `<div style="display:flex;align-items:center;justify-content:space-between;font-size:0.85rem;padding:8px 10px;border:1px solid var(--border);border-radius:6px;cursor:pointer" onclick="openEditAsset('${a.id}')">
-                <span>${a.name}</span>
-                <span style="font-weight:600;color:${color}">${(a.locations[loc]||0) > 1 ? '×'+a.locations[loc] : '✓'}</span>
-              </div>`).join('')
+            ${locAssets.length === 0
+              ? '<div style="font-size:0.82rem;color:#aaa;padding:8px 0">No assets at this location</div>'
+              : locAssets.map(a => `<div style="display:flex;align-items:center;justify-content:space-between;font-size:0.85rem;padding:8px 10px;border:1px solid var(--border);border-radius:6px;cursor:pointer" onclick="openEditAsset('${a.id}')">
+                  <span>${a.name}</span>
+                  <span style="font-weight:600;color:${color}">${(a.locations[loc]||0) > 1 ? '×'+a.locations[loc] : '✓'}</span>
+                </div>`).join('')
             }
           </div>
         </div>`;
@@ -707,16 +768,23 @@ function openEditAsset(id) {
   document.getElementById('btnDelete').style.display = '';
   document.getElementById('locQtyFields').innerHTML = buildLocFields(a.locations);
   const prev = document.getElementById('modalImagePreview');
-  prev.innerHTML = a.image ? `<img src="${a.image}" alt="" style="max-height:180px;object-fit:contain">` : '<span id="modalImageEmoji">🖼️</span>';
+  prev.innerHTML = a.image
+    ? `<img src="${a.image}" alt="" style="max-height:180px;object-fit:contain">`
+    : '<span id="modalImageEmoji">🖼️</span>';
   openModal('assetModal');
 }
 
 function handleImageUpload(ev) {
   const file = ev.target.files[0]; if (!file) return;
+  // Warn if image is very large (base64 in jsonb can hit row size limits)
+  if (file.size > 800000) {
+    showToast('⚠️ Large image — may slow saves. Consider resizing first.', true);
+  }
   const reader = new FileReader();
   reader.onload = e => {
     currentImageData = e.target.result;
-    document.getElementById('modalImagePreview').innerHTML = `<img src="${currentImageData}" style="max-height:180px;object-fit:contain">`;
+    document.getElementById('modalImagePreview').innerHTML =
+      `<img src="${currentImageData}" style="max-height:180px;object-fit:contain">`;
   };
   reader.readAsDataURL(file);
 }
@@ -724,7 +792,7 @@ function handleImageUpload(ev) {
 function readLocQtys() {
   const out = {};
   LOCS.forEach(l => {
-    const el = document.getElementById('qty_'+l.replace(/ /g,'_'));
+    const el = document.getElementById('qty_' + l.replace(/ /g,'_'));
     out[l] = el ? parseInt(el.value)||0 : 0;
   });
   return out;
@@ -733,10 +801,16 @@ function readLocQtys() {
 async function saveAsset() {
   const name = document.getElementById('fName').value.trim();
   if (!name) { alert('Please enter an asset name.'); return; }
-  const data = {
+
+  const btn = document.getElementById('btnSaveAsset');
+  btn.disabled = true;
+  btn.textContent = 'Saving…';
+
+  const assetData = {
     id: editingAssetId || uid(),
     brand: document.getElementById('fBrand').value,
-    name, type: document.getElementById('fType').value,
+    name,
+    type: document.getElementById('fType').value,
     dims: document.getElementById('fDims').value.trim(),
     supplier: document.getElementById('fSupplier').value.trim(),
     supplierUrl: document.getElementById('fSupplierUrl').value.trim(),
@@ -744,23 +818,42 @@ async function saveAsset() {
     notes: document.getElementById('fNotes').value.trim(),
     image: currentImageData,
   };
-  if (editingAssetId) {
-    const idx = assets.findIndex(a => a.id === editingAssetId);
-    assets[idx] = data;
-  } else {
-    assets.push(data);
+
+  try {
+    // Write to Supabase first — if this fails we abort and show the error
+    await upsertAsset(assetData);
+
+    // Only update local state after confirmed save
+    if (editingAssetId) {
+      const idx = assets.findIndex(a => a.id === editingAssetId);
+      if (idx >= 0) assets[idx] = assetData; else assets.push(assetData);
+    } else {
+      assets.push(assetData);
+    }
+
+    closeModal('assetModal');
+    render();
+    showToast(editingAssetId ? '✓ Asset updated and saved' : '✓ Asset added and saved');
+  } catch(e) {
+    showToast('❌ ' + e.message, true);
+    console.error('saveAsset error:', e);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Save Asset';
   }
-  await upsertAsset(data);
-  closeModal('assetModal'); render();
-  showToast(editingAssetId ? 'Asset updated ✓' : 'Asset added ✓');
 }
 
 async function deleteAsset() {
-  if (!confirm('Delete this asset?')) return;
-  assets = assets.filter(a => a.id !== editingAssetId);
-  await removeAsset(editingAssetId);
-  closeModal('assetModal'); render();
-  showToast('Asset deleted');
+  if (!confirm('Delete this asset? This cannot be undone.')) return;
+  try {
+    await removeAsset(editingAssetId);
+    assets = assets.filter(a => a.id !== editingAssetId);
+    closeModal('assetModal');
+    render();
+    showToast('Asset deleted');
+  } catch(e) {
+    showToast('❌ ' + e.message, true);
+  }
 }
 
 // ── EVENT MODAL ──
@@ -773,8 +866,12 @@ function openEventModal() {
   document.getElementById('eNotes').value = '';
   document.getElementById('eEditId').value = '';
   document.getElementById('btnDeleteEvent').style.display = 'none';
-  const list = document.getElementById('eventAssetList');
-  list.innerHTML = assets.map(a => `<label style="display:flex;align-items:center;gap:8px;font-size:0.84rem;padding:5px 0;cursor:pointer"><input type="checkbox" value="${a.id}" style="accent-color:var(--accent)"> ${a.name} <span style="color:var(--ink-soft);font-size:0.75rem">(${a.brand})</span></label>`).join('');
+  document.getElementById('eventAssetList').innerHTML = assets.map(a =>
+    `<label style="display:flex;align-items:center;gap:8px;font-size:0.84rem;padding:5px 0;cursor:pointer">
+      <input type="checkbox" value="${a.id}" style="accent-color:var(--accent)"> ${a.name}
+      <span style="color:var(--ink-soft);font-size:0.75rem">(${a.brand})</span>
+    </label>`
+  ).join('');
   openModal('eventModal');
 }
 
@@ -789,42 +886,69 @@ function openEditEvent(id) {
   document.getElementById('eNotes').value = ev.notes || '';
   document.getElementById('eEditId').value = id;
   document.getElementById('btnDeleteEvent').style.display = '';
-  const list = document.getElementById('eventAssetList');
-  list.innerHTML = assets.map(a => `<label style="display:flex;align-items:center;gap:8px;font-size:0.84rem;padding:5px 0;cursor:pointer"><input type="checkbox" value="${a.id}" ${(ev.assets||[]).includes(a.id)?'checked':''} style="accent-color:var(--accent)"> ${a.name} <span style="color:var(--ink-soft);font-size:0.75rem">(${a.brand})</span></label>`).join('');
+  document.getElementById('eventAssetList').innerHTML = assets.map(a =>
+    `<label style="display:flex;align-items:center;gap:8px;font-size:0.84rem;padding:5px 0;cursor:pointer">
+      <input type="checkbox" value="${a.id}" ${(ev.assets||[]).includes(a.id)?'checked':''} style="accent-color:var(--accent)"> ${a.name}
+      <span style="color:var(--ink-soft);font-size:0.75rem">(${a.brand})</span>
+    </label>`
+  ).join('');
   openModal('eventModal');
 }
 
 async function saveEvent() {
   const name = document.getElementById('eName').value.trim();
   if (!name) { alert('Please enter an event name.'); return; }
-  const checked = [...document.querySelectorAll('#eventAssetList input:checked')].map(i => i.value);
+
+  const btn = document.getElementById('btnSaveEvent');
+  btn.disabled = true;
+  btn.textContent = 'Saving…';
+
   const editId = document.getElementById('eEditId').value;
-  const data = {
+  const checked = [...document.querySelectorAll('#eventAssetList input:checked')].map(i => i.value);
+  const eventData = {
     id: editId || uid(),
-    name, brand: document.getElementById('eBrand').value,
+    name,
+    brand: document.getElementById('eBrand').value,
     date: document.getElementById('eDate').value,
     location: document.getElementById('eLocation').value,
     notes: document.getElementById('eNotes').value.trim(),
     assets: checked,
   };
-  if (editId) {
-    const idx = events.findIndex(e => e.id === editId);
-    events[idx] = data;
-  } else {
-    events.push(data);
+
+  try {
+    await upsertEvent(eventData);
+
+    if (editId) {
+      const idx = events.findIndex(e => e.id === editId);
+      if (idx >= 0) events[idx] = eventData; else events.push(eventData);
+    } else {
+      events.push(eventData);
+    }
+
+    closeModal('eventModal');
+    render();
+    showToast(editId ? '✓ Event updated and saved' : '✓ Event added and saved');
+  } catch(e) {
+    showToast('❌ ' + e.message, true);
+    console.error('saveEvent error:', e);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Save Event';
   }
-  await upsertEvent(data);
-  closeModal('eventModal'); render();
-  showToast(editId ? 'Event updated ✓' : 'Event added ✓');
 }
 
 async function deleteEvent() {
   const id = document.getElementById('eEditId').value;
-  if (!confirm('Delete this event?')) return;
-  events = events.filter(e => e.id !== id);
-  await removeEvent(id);
-  closeModal('eventModal'); render();
-  showToast('Event deleted');
+  if (!confirm('Delete this event? This cannot be undone.')) return;
+  try {
+    await removeEvent(id);
+    events = events.filter(e => e.id !== id);
+    closeModal('eventModal');
+    render();
+    showToast('Event deleted');
+  } catch(e) {
+    showToast('❌ ' + e.message, true);
+  }
 }
 
 function openModal(id) { document.getElementById(id).classList.add('open'); }
