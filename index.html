@@ -449,9 +449,11 @@ async function init() {
   try {
     sb = window.supabase.createClient(SB_URL, SB_KEY);
 
-    // Listen for sign-in events (when user clicks magic link)
+// Listen for sign-in events (when user clicks magic link)
+    let appStarted = false;
     sb.auth.onAuthStateChange((event, session) => {
-      if (event === 'SIGNED_IN' && session && document.getElementById('mainApp').style.display === 'none') {
+      if (event === 'SIGNED_IN' && session && !appStarted) {
+        appStarted = true;
         startApp();
       }
     });
