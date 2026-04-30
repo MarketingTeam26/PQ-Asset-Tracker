@@ -445,7 +445,24 @@ let assets = [], events = [];
 let currentView = 'assets', filterBrandVal = 'ALL', filterLocVal = '', searchVal = '', viewMode = 'grid';
 let editingAssetId = null, editingEventId = null, currentImageData = '';
 let appStarted = false;
-
+function handleSearchInput(input) {
+  searchVal = input.value;
+  // Only re-render the asset list, not the whole page — keeps the cursor in the search box
+  const filtered = getFiltered();
+  const container = document.getElementById('assetContainer');
+  if (!container) return;
+  if (!filtered.length) {
+    container.innerHTML = `<div class="empty-state"><div class="emoji">📦</div><p>No assets found. Try adjusting your filters or <button class="btn btn-primary btn-sm" onclick="openAddAsset()">add a new asset</button>.</p></div>`;
+    return;
+  }
+  if (viewMode === 'grid') {
+    container.className = 'asset-grid';
+    container.innerHTML = filtered.map(cardHtml).join('');
+  } else {
+    container.className = 'asset-list';
+    container.innerHTML = filtered.map(listHtml).join('');
+  }
+}
 // ── INIT ──
 async function init() {
   try {
