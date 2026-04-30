@@ -259,9 +259,10 @@
   <div class="error-card">
     <div class="emoji">🔐</div>
     <h2>Sign in to Asset Tracker</h2>
-    <p style="margin-bottom:20px">Enter your email and we'll send you a magic link to sign in.</p>
+    <p style="margin-bottom:20px">Enter your email and password to sign in.</p>
     <input type="email" id="loginEmail" class="field-input" placeholder="you@company.com" style="margin-bottom:12px" autocomplete="email">
-    <button class="btn btn-primary" id="loginBtn" onclick="sendMagicLink()" style="width:100%">Send magic link</button>
+    <input type="password" id="loginPassword" class="field-input" placeholder="Password" style="margin-bottom:12px" autocomplete="current-password">
+    <button class="btn btn-primary" id="loginBtn" onclick="signInWithPassword()" style="width:100%">Sign in</button>
     <p id="loginMsg" style="margin-top:14px;font-size:0.82rem;display:none"></p>
   </div>
 </div>
@@ -443,20 +444,12 @@ let sb = null;
 let assets = [], events = [];
 let currentView = 'assets', filterBrandVal = 'ALL', filterLocVal = '', searchVal = '', viewMode = 'grid';
 let editingAssetId = null, editingEventId = null, currentImageData = '';
+let appStarted = false;
 
 // ── INIT ──
 async function init() {
   try {
     sb = window.supabase.createClient(SB_URL, SB_KEY);
-
-// Listen for sign-in events (when user clicks magic link)
-    let appStarted = false;
-    sb.auth.onAuthStateChange((event, session) => {
-      if (event === 'SIGNED_IN' && session && !appStarted) {
-        appStarted = true;
-        startApp();
-      }
-    });
 
     // Check if user is already signed in
     const { data: { session } } = await sb.auth.getSession();
@@ -482,6 +475,8 @@ async function init() {
 }
 
 async function startApp() {
+  if (appStarted) return;
+  appStarted = true;
   try {
     await loadData();
     document.getElementById('loadingOverlay').style.display = 'none';
@@ -500,8 +495,9 @@ async function startApp() {
   }
 }
 
-async function sendMagicLink() {
+async function signInWithPassword() {
   const email = document.getElementById('loginEmail').value.trim();
+  const password = document.getElementById('loginPassword').value;
   const msg = document.getElementById('loginMsg');
   const btn = document.getElementById('loginBtn');
 
@@ -511,25 +507,30 @@ async function sendMagicLink() {
     msg.textContent = 'Please enter a valid email address.';
     return;
   }
+  if (!password) {
+    msg.style.display = 'block';
+    msg.style.color = '#b91c1c';
+    msg.textContent = 'Please enter your password.';
+    return;
+  }
 
   btn.disabled = true;
-  btn.textContent = 'Sending…';
+  btn.textContent = 'Signing in…';
+  msg.style.display = 'none';
 
-  const { error } = await sb.auth.signInWithOtp({
-    email,
-    options: { emailRedirectTo: window.location.href }
-  });
+  const { data, error } = await sb.auth.signInWithPassword({ email, password });
 
-  msg.style.display = 'block';
   if (error) {
+    msg.style.display = 'block';
     msg.style.color = '#b91c1c';
     msg.textContent = '❌ ' + error.message;
     btn.disabled = false;
-    btn.textContent = 'Send magic link';
-  } else {
-    msg.style.color = '#4a7c59';
-    msg.textContent = '✓ Check your email for the magic link!';
-    btn.textContent = 'Sent — check your email';
+    btn.textContent = 'Sign in';
+    return;
+  }
+
+  if (data.session) {
+    await startApp();
   }
 }
 
@@ -585,7 +586,6 @@ function setupRealtime() {
 }
 
 // ── SAVE / DELETE HELPERS ──
-// Saves the full asset object into the `data` jsonb column, keyed by `id`
 async function upsertAsset(assetData) {
   const { error } = await sb
     .from('assets')
@@ -862,7 +862,6 @@ function openEditAsset(id) {
 
 function handleImageUpload(ev) {
   const file = ev.target.files[0]; if (!file) return;
-  // Warn if image is very large (base64 in jsonb can hit row size limits)
   if (file.size > 800000) {
     showToast('⚠️ Large image — may slow saves. Consider resizing first.', true);
   }
@@ -906,10 +905,8 @@ async function saveAsset() {
   };
 
   try {
-    // Write to Supabase first — if this fails we abort and show the error
     await upsertAsset(assetData);
 
-    // Only update local state after confirmed save
     if (editingAssetId) {
       const idx = assets.findIndex(a => a.id === editingAssetId);
       if (idx >= 0) assets[idx] = assetData; else assets.push(assetData);
@@ -1045,9 +1042,12 @@ document.querySelectorAll('.modal-overlay').forEach(el => {
   el.addEventListener('click', e => { if (e.target === el) el.classList.remove('open'); });
 });
 
-// Allow pressing Enter in the login email field to submit
+// Allow pressing Enter in the login fields to submit
 document.getElementById('loginEmail').addEventListener('keydown', e => {
-  if (e.key === 'Enter') sendMagicLink();
+  if (e.key === 'Enter') document.getElementById('loginPassword').focus();
+});
+document.getElementById('loginPassword').addEventListener('keydown', e => {
+  if (e.key === 'Enter') signInWithPassword();
 });
 
 // ── START ──
