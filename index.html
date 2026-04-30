@@ -686,7 +686,7 @@ function renderAssets(main) {
     <div class="toolbar">
       <div class="search-wrap">
         <span class="search-icon">🔍</span>
-        <input type="text" placeholder="Search assets, suppliers, types…" value="${searchVal}" oninput="searchVal=this.value;render()">
+        <input type="text" id="searchInput" placeholder="Search assets, suppliers, types…" value="${searchVal}" oninput="handleSearchInput(this)">
       </div>
       <select class="filter-select" onchange="searchVal=this.value;render()">
         <option value="">All Types</option>
